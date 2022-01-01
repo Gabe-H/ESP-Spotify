@@ -1,12 +1,10 @@
 #include <Arduino.h>
-#include <ESP8266WiFi.h>
-#include <EEPROM.h>
+#include <SpotifyArduino.h>
 
-#define E_WIFI         0
-#define E_SPOTIFY     66
-#define E_SSID         1
-#define E_PASS        34
-#define E_TOKEN       67
+#define CLIENT_ID       "YOUR_CLIENT_ID"
+#define CLIENT_SECRET   "YOUR_CLIENT_SECRET"
+
+char hostname[] = "esp";
 
 String ssid;
 String passwd;
@@ -14,19 +12,26 @@ String passwd;
 bool spotifyReady = false;
 unsigned long timer;
 uint16_t delayBetweenRequests = 1000;
+uint8_t nothingPlayingCount = 0;
 
 bool connect();
 void manualWiFi();
 
-const char callbackURI[] = "http%3A%2F%2Fesp.local%2Fcallback%2F";
+char callbackURI[50];
 const char scope[] = "user-read-playback-state%20user-modify-playback-state";
 
+#include <ESP8266WiFi.h>
 #include <ESP8266WebServer.h>
 #include <WiFiClientSecure.h>
 #include <ESP8266mDNS.h>
-#include <SpotifyArduino.h>
 #include <ArduinoJson.h>
-#include "creds.h"
+#include <EEPROM.h>
+
+#define E_WIFI         0
+#define E_SPOTIFY     66
+#define E_SSID         1
+#define E_PASS        34
+#define E_TOKEN       67
 
 ESP8266WebServer server(80);
 WiFiClientSecure client;
@@ -37,6 +42,16 @@ CurrentlyPlaying current;
 #include <SSD1306Wire.h>
 
 SSD1306Wire display(0x3c, SDA, SCL);
+
+void displayStatus(String header, String body="", String body2="", String body3="") {
+  display.clear();
+  display.setTextAlignment(TEXT_ALIGN_CENTER);
+  display.drawString(64, 0, header);
+  display.drawString(64, 16, body);
+  display.drawString(64, 32, body2);
+  display.drawString(64, 48, body3);
+  display.display();
+}
 
 String readString(bool hidden=false) {
   char buff[32];
@@ -124,6 +139,7 @@ bool readToken()
 
     Serial.println("Got token");
     Serial.println(refreshToken);
+    displayStatus("Authenticating...");
 
     spotify.setRefreshToken(refreshToken.c_str());
     if (spotify.refreshAccessToken())
@@ -138,7 +154,9 @@ bool readToken()
 
 bool connect()
 {
-  Serial.printf("Connecting to: %s : %s\n", ssid.c_str(), passwd.c_str());
+  Serial.printf("Connecting to: %s\n", ssid.c_str());
+  displayStatus("Connecting...", ssid);
+
   WiFi.begin(ssid, passwd);
 
   delay(1500);
@@ -151,6 +169,8 @@ bool connect()
 
   if (WiFi.status() == WL_CONNECTED)
   {
+    displayStatus("Connected!", ssid.c_str());
+
     Serial.println("Connected!");
     Serial.print("IP: ");
     Serial.println(WiFi.localIP());
@@ -159,7 +179,9 @@ bool connect()
   }
 
   Serial.print("Failed to connect: ");
+  displayStatus("Failed.", ssid, "", "Connect serial");
   Serial.println(WiFi.status());
+
   eraseWiFi();
   manualWiFi();
   return false;
@@ -224,10 +246,12 @@ void setup()
   display.setFont(Roboto_Condensed_13);
   EEPROM.begin(512);
 
+  sprintf(callbackURI, "http://%s.local/callback/", hostname);
+
   if (!readWiFi())
     manualWiFi();
 
-  if (MDNS.begin("esp"))
+  if (MDNS.begin(hostname))
   {
     Serial.println("MDNS responder started");
   }
@@ -268,9 +292,11 @@ void setup()
   Serial.println("HTTP server started");
 
   if (!readToken())
+  {
     printAuth();
+    displayStatus("Connect serial", "to sign in");
+  }
 }
-
 
 void menu()
 {
@@ -317,8 +343,8 @@ void displayCurrentlyPlaying(CurrentlyPlaying currentlyPlaying, int status)
   display.setTextAlignment(TEXT_ALIGN_LEFT);
   switch (status) {
     case 200: {
-      // failedCount = 0;
-      // nothingPlayingCount = 0;
+      delayBetweenRequests = 1000;
+      nothingPlayingCount = 0;
       display.drawString(0, 0, currentlyPlaying.trackName);
       display.drawString(0, 16, currentlyPlaying.artists[0].artistName);
       display.drawString(0, 32, currentlyPlaying.albumName);
@@ -329,16 +355,17 @@ void displayCurrentlyPlaying(CurrentlyPlaying currentlyPlaying, int status)
       break;
 
     case 204:
-      // if (nothingPlayingCount < 3) {
-      //   nothingPlayingCount++;
-      //   Serial.println(nothingPlayingCount);
-      //   display.drawString(0, 0, F("Nothing playing"));
-      // }
+      if (nothingPlayingCount < 3) {
+        nothingPlayingCount++;
+        Serial.println(nothingPlayingCount);
+        display.drawString(0, 0, F("Nothing playing"));
+        delayBetweenRequests = 5000;
+      }
       break;
     
     default:
-      // display.drawString(0, 0, F("ERROR"));
-      // display.drawString(0, 16, F("Please reset"));
+      display.clear();
+      display.display();
       break;
   }
   display.display();
