@@ -14,11 +14,19 @@ unsigned long timer;
 uint16_t delayBetweenRequests = 1000;
 uint8_t nothingPlayingCount = 0;
 
+// Track scroll variables
+bool longTrack;
+int16_t trackIndex = 1;
+unsigned long trackTimer;
+uint16_t trackDelay = 50;
+
+char repeatSpace[] = "          ";
+
 bool connect();
 void manualWiFi();
 
 char callbackURI[50];
-const char scope[] = "user-read-playback-state%20user-modify-playback-state";
+const char scope[] = "user-read-playback-state";
 
 #include <ESP8266WiFi.h>
 #include <ESP8266WebServer.h>
@@ -345,14 +353,50 @@ void displayCurrentlyPlaying(CurrentlyPlaying currentlyPlaying, int status)
     case 200: {
       delayBetweenRequests = 1000;
       nothingPlayingCount = 0;
-      display.drawString(0, 0, currentlyPlaying.trackName);
+      String trackName = currentlyPlaying.trackName;
+      trackName += repeatSpace;
+
+      uint16_t trackLen = display.getStringWidth(trackName);
+
+      if (trackLen >= 125)
+        longTrack = true;
+
+      // if (longTrack)  // Requests take too long. Try again with ESP32
+      if (false)
+      {
+        display.drawString(trackIndex, 0, trackName+trackName);
+
+        if ((millis()-trackTimer) >= trackDelay)
+        {
+          trackTimer = millis();
+
+          if (trackIndex == 1)
+          {
+            trackIndex--;
+            trackDelay = 5000;
+          }
+          else if (trackLen+trackIndex == 1)
+          {
+            trackIndex = 1;
+          }
+          else
+          {
+            trackIndex--;
+            trackDelay = 50;
+          }
+        }
+      }
+      else
+      {
+        display.drawString(0, 0, trackName);
+      }
       display.drawString(0, 16, currentlyPlaying.artists[0].artistName);
       display.drawString(0, 32, currentlyPlaying.albumName);
 
       float precentage = ((float) currentlyPlaying.progressMs / (float) currentlyPlaying.durationMs) * 100;
       display.drawProgressBar(1, 50, 126, 10, (int)precentage);
     }
-      break;
+    break;
 
     case 204:
       if (nothingPlayingCount < 3) {
