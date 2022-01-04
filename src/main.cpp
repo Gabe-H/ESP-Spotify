@@ -1,5 +1,6 @@
 #include <Arduino.h>
 #include <SpotifyArduino.h>
+#include "ScrollingText.h"
 
 #define CLIENT_ID       "YOUR_CLIENT_ID"
 #define CLIENT_SECRET   "YOUR_CLIENT_SECRET"
@@ -13,12 +14,6 @@ bool spotifyReady = false;
 unsigned long timer;
 uint16_t delayBetweenRequests = 1000;
 uint8_t nothingPlayingCount = 0;
-
-// Track scroll variables
-bool longTrack;
-int16_t trackIndex = 1;
-unsigned long trackTimer;
-uint16_t trackDelay = 50;
 
 char repeatSpace[] = "          ";
 
@@ -47,9 +42,18 @@ SpotifyArduino spotify(client, CLIENT_ID, CLIENT_SECRET);
 
 CurrentlyPlaying current;
 
+unsigned long oldTime;
+unsigned long progressTimer;
+uint8_t progressMultiplier;
+bool scrollPaused;
+
 #include <SSD1306Wire.h>
 
 SSD1306Wire display(0x3c, SDA, SCL);
+
+ScrollingText title(&display);
+ScrollingText artist(&display);
+ScrollingText album(&display);
 
 void displayStatus(String header, String body="", String body2="", String body3="") {
   display.clear();
@@ -118,15 +122,11 @@ bool readWiFi()
   {
     char buff[32];
     for (int i=0; i<32; i++)
-    {
       buff[i] = EEPROM.read(i+E_SSID);
-    }
     ssid = buff;
 
     for (int i=0; i<32; i++)
-    {
       buff[i] = EEPROM.read(i+E_PASS);
-    }
     passwd = buff;
     connect();
     return true;
@@ -141,9 +141,7 @@ bool readToken()
     Serial.println("Token is saved");
     String refreshToken = "";
     for (int i=0; i<200; i++)
-    {
       refreshToken += char(EEPROM.read(i+E_TOKEN));
-    }
 
     Serial.println("Got token");
     Serial.println(refreshToken);
@@ -211,9 +209,7 @@ void manualWiFi()
   Serial.printf(" Found %d networks\n", found);
 
   for (int i=0; i<found; i++)
-  {
     Serial.printf("\t%X: %s\n", i, WiFi.SSID(i).c_str());
-  }
   Serial.print("\n\nEnter a network index: ");
 
   while (!Serial.available());
@@ -221,17 +217,11 @@ void manualWiFi()
   char c = Serial.read();
 
   if (c >= 97) // Lowercase letter
-  {
     ssid = WiFi.SSID(c-'a');
-  }
   else if (c >= 65) // Uppercase letter
-  {
     ssid = WiFi.SSID(c-'A');
-  }
   else // Digit
-  {
     ssid = WiFi.SSID(c-'0');
-  }
 
   Serial.printf("Selected %s\n", ssid.c_str());
 
@@ -254,15 +244,17 @@ void setup()
   display.setFont(Roboto_Condensed_13);
   EEPROM.begin(512);
 
+  title.setHeight(0);
+  artist.setHeight(16);
+  album.setHeight(32);
+
   sprintf(callbackURI, "http://%s.local/callback/", hostname);
 
   if (!readWiFi())
     manualWiFi();
 
   if (MDNS.begin(hostname))
-  {
     Serial.println("MDNS responder started");
-  }
 
   client.setFingerprint(SPOTIFY_FINGERPRINT);
 
@@ -285,9 +277,7 @@ void setup()
 
       EEPROM.write(E_SPOTIFY, 1);
       for (int i=0; i<200; i++)
-      {
         EEPROM.write(i+E_TOKEN, refreshToken[i]);
-      }
       EEPROM.commit();
     }
     else
@@ -345,79 +335,87 @@ void menu()
   }
 }
 
+void drawProgressBar()
+{
+  if ((millis() - progressTimer) >= 1000 && current.isPlaying)
+  {
+    progressTimer = millis();
+    progressMultiplier++;
+  }
+  float percentage = ((float)(current.progressMs + (progressMultiplier*1000)) / (float)current.durationMs) * 100;
+
+  display.drawProgressBar(1, 50, 126, 10, (int)percentage);
+}
+
 void displayCurrentlyPlaying(CurrentlyPlaying currentlyPlaying, int status)
 {
-  display.clear();
   display.setTextAlignment(TEXT_ALIGN_LEFT);
   switch (status) {
-    case 200: {
+    case 200:
       delayBetweenRequests = 1000;
       nothingPlayingCount = 0;
-      String trackName = currentlyPlaying.trackName;
-      trackName += repeatSpace;
-
-      uint16_t trackLen = display.getStringWidth(trackName);
-
-      if (trackLen >= 125)
-        longTrack = true;
-
-      // if (longTrack)  // Requests take too long. Try again with ESP32
-      if (false)
-      {
-        display.drawString(trackIndex, 0, trackName+trackName);
-
-        if ((millis()-trackTimer) >= trackDelay)
-        {
-          trackTimer = millis();
-
-          if (trackIndex == 1)
-          {
-            trackIndex--;
-            trackDelay = 5000;
-          }
-          else if (trackLen+trackIndex == 1)
-          {
-            trackIndex = 1;
-          }
-          else
-          {
-            trackIndex--;
-            trackDelay = 50;
-          }
-        }
-      }
-      else
-      {
-        display.drawString(0, 0, trackName);
-      }
-      display.drawString(0, 16, currentlyPlaying.artists[0].artistName);
-      display.drawString(0, 32, currentlyPlaying.albumName);
-
-      float precentage = ((float) currentlyPlaying.progressMs / (float) currentlyPlaying.durationMs) * 100;
-      display.drawProgressBar(1, 50, 126, 10, (int)precentage);
-    }
+      progressMultiplier = 0;
     break;
 
     case 204:
+      display.clear();
       if (nothingPlayingCount < 3) {
         nothingPlayingCount++;
-        Serial.println(nothingPlayingCount);
-        display.drawString(0, 0, F("Nothing playing"));
+
+        title.setText("");
+        artist.setText("");
+        album.setText("");
+
+        displayStatus(F("Nothing playing"));
+
         delayBetweenRequests = 5000;
       }
+      display.display();
       break;
     
     default:
-      display.clear();
-      display.display();
+      displayStatus("Error", String(status));
       break;
   }
-  display.display();
 }
 
 void handleCurrentlyPlaying(CurrentlyPlaying currentlyPlaying)
 {
   current = currentlyPlaying;
+
+  if (title.getText().c_str() != current.trackName)
+    title.setText(current.trackName);
+  if (artist.getText().c_str() != current.artists[0].artistName)
+    artist.setText(current.artists[0].artistName);
+  if (album.getText().c_str() != current.albumName)
+    album.setText(current.albumName);
+}
+
+bool pauseScroll(uint16_t pauseTime)
+{
+  uint16_t scrollers = 0b0000;
+
+  if (title.isScrolling()) scrollers |= 0b0001;
+  if (artist.isScrolling()) scrollers |= 0b0010;
+  if (album.isScrolling()) scrollers |= 0b0100;
+
+  if (scrollers == 0b0000)
+  {
+    if (!scrollPaused)
+    {
+      oldTime = millis();
+      scrollPaused = true;
+    }
+    else if ((millis() - oldTime) >= pauseTime)
+    {
+      title.enableScroll();
+      artist.enableScroll();
+      album.enableScroll();
+      scrollPaused = false;
+    }
+    return true;
+  }
+  return false;
 }
 
 void loop()
@@ -426,10 +424,24 @@ void loop()
   server.handleClient();
   menu();
   if (spotifyReady)
-    if ((millis() - timer) >= delayBetweenRequests)
+  {
+    if (pauseScroll(8000))
     {
-      int status = spotify.getCurrentlyPlaying(handleCurrentlyPlaying);
-      displayCurrentlyPlaying(current, status);
-      timer = millis();
+      if ((millis() - timer) >= delayBetweenRequests)
+      {
+        unsigned long before = millis();
+        int status = spotify.getCurrentlyPlaying(handleCurrentlyPlaying);
+        displayCurrentlyPlaying(current, status);
+        Serial.printf("Request time: %d\n", int(millis() - before));
+        timer = millis();
+      }
     }
+
+    display.clear();
+    title.draw();
+    artist.draw();
+    album.draw();
+    drawProgressBar();
+    display.display();
+  }
 }
