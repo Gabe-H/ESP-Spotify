@@ -48,6 +48,7 @@ SpotifyArduino spotify(client, CLIENT_ID, CLIENT_SECRET);
 CurrentlyPlaying current;
 
 #include <SSD1306Wire.h>
+#include "roboto.h"
 
 SSD1306Wire display(0x3c, SDA, SCL);
 
