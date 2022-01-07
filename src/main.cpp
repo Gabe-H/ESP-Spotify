@@ -346,7 +346,7 @@ void menu()
   }
 }
 
-void displayCurrentlyPlaying(CurrentlyPlaying currentlyPlaying, int status)
+void displayCurrentlyPlaying(int status)
 {
   display.clear();
   display.setTextAlignment(TEXT_ALIGN_LEFT);
@@ -354,7 +354,7 @@ void displayCurrentlyPlaying(CurrentlyPlaying currentlyPlaying, int status)
     case 200: {
       delayBetweenRequests = 1000;
       nothingPlayingCount = 0;
-      String trackName = currentlyPlaying.trackName;
+      String trackName = current.trackName;
       trackName += repeatSpace;
 
       uint16_t trackLen = display.getStringWidth(trackName);
@@ -391,10 +391,10 @@ void displayCurrentlyPlaying(CurrentlyPlaying currentlyPlaying, int status)
       {
         display.drawString(0, 0, trackName);
       }
-      display.drawString(0, 16, currentlyPlaying.artists[0].artistName);
-      display.drawString(0, 32, currentlyPlaying.albumName);
+      display.drawString(0, 16, current.artists[0].artistName);
+      display.drawString(0, 32, current.albumName);
 
-      float precentage = ((float) currentlyPlaying.progressMs / (float) currentlyPlaying.durationMs) * 100;
+      float precentage = ((float) current.progressMs / (float) current.durationMs) * 100;
       display.drawProgressBar(1, 50, 126, 10, (int)precentage);
     }
     break;
@@ -430,7 +430,7 @@ void loop()
     if ((millis() - timer) >= delayBetweenRequests)
     {
       int status = spotify.getCurrentlyPlaying(handleCurrentlyPlaying);
-      displayCurrentlyPlaying(current, status);
+      displayCurrentlyPlaying(status);
       timer = millis();
     }
 }
